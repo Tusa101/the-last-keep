@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Find newest semver ZIP in repository root and safely extract it to _game/."""
 import argparse
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -51,5 +52,8 @@ if __name__=='__main__':
     ap=argparse.ArgumentParser();ap.add_argument('--root',default='.');ap.add_argument('--output',default='_game');args=ap.parse_args()
     root=Path(args.root).resolve();chosen=select(root)
     print(f'Selected latest version: {chosen.name}',flush=True)
+    if os.getenv('GITHUB_ENV'):
+        with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+            env.write(f'RELEASE_ARCHIVE={chosen.name}\n')
     unpack(chosen,Path(args.output).resolve())
     print('Extracted to:',Path(args.output).resolve())
