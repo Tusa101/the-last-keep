@@ -31,25 +31,60 @@ jobs:
         working-directory: _game
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+      - name: Core TypeScript check
+        working-directory: _game
+        run: npm run typecheck:core
       - name: Run unit tests
         working-directory: _game
         run: npm test
+      - name: Run deterministic three-wave balance regression
+        working-directory: _game
+        run: npm run check:balance
       - name: Build for GitHub Pages
         working-directory: _game
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: npm run build
+      - name: Write release version receipt
+        working-directory: _game
+        run: npm run write:release
+      - name: Verify production assets and GitHub Pages base path
+        working-directory: _game
+        run: npm run verify:dist
       - name: Install browser for smoke test
         working-directory: _game
         run: npx playwright install --with-deps chromium
-      - name: Run browser smoke test
+      - name: Test startup recovery UI without depending on WebGL
+        working-directory: _game
+        run: npm run smoke:boot
+      - name: Run independent mobile layout smoke test
+        working-directory: _game
+        run: npm run smoke:ui
+      - name: Run onboarding layout and menu smoke test
+        working-directory: _game
+        run: npm run smoke:tutorial
+      - name: Smoke-test the actual production bundle (with Pages subpath)
         working-directory: _game
         run: |
-          npm run dev -- --host 127.0.0.1 --port 4173 > /tmp/vite.log 2>&1 &
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY##*/}"
+          if [ "${REPO,,}" = "${OWNER,,}.github.io" ]; then
+            export SMOKE_URL="http://127.0.0.1:4173/"
+          else
+            export SMOKE_URL="http://127.0.0.1:4173/$REPO/"
+          fi
+          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort > /tmp/vite-preview.log 2>&1 &
           SERVER_PID=$!
-          trap 'kill $SERVER_PID || true' EXIT
-          for i in $(seq 1 45); do curl -fsS http://127.0.0.1:4173/ >/dev/null && break || sleep 1; done
+          trap 'kill "$SERVER_PID" || true' EXIT
+          READY=false
+          for i in $(seq 1 45); do
+            if curl --silent --show-error --fail "$SMOKE_URL" -o /dev/null; then READY=true; break; fi
+            sleep 1
+          done
+          if [ "$READY" != true ]; then cat /tmp/vite-preview.log; exit 1; fi
           npm run smoke
+          npm run smoke:slice
+          npm run smoke:devices
       - name: Upload screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -57,7 +92,9 @@ jobs:
           name: smoke-debug
           path: |
             _game/smoke-*.png
+            _game/slice-*.png
             _game/dist/
+            _game/boot-*.png
           if-no-files-found: ignore
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
