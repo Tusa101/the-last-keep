@@ -1,0 +1,67 @@
+name: Deploy newest THE LAST KEEP ZIP to GitHub Pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.zip'
+      - '.github/workflows/deploy.yml'
+      - 'scripts/select_latest.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select and extract latest versioned archive
+        run: python3 scripts/select_latest.py --root . --output _game
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: _game
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+      - name: Run unit tests
+        working-directory: _game
+        run: npm test
+      - name: Build for GitHub Pages
+        working-directory: _game
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: npm run build
+      - name: Install browser for smoke test
+        working-directory: _game
+        run: npx playwright install --with-deps chromium
+      - name: Run browser smoke test
+        working-directory: _game
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 4173 > /tmp/vite.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID || true' EXIT
+          for i in $(seq 1 45); do curl -fsS http://127.0.0.1:4173/ >/dev/null && break || sleep 1; done
+          npm run smoke
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-debug
+          path: |
+            _game/smoke-*.png
+            _game/dist/
+          if-no-files-found: ignore
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _game/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
